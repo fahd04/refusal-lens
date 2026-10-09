@@ -1,0 +1,48 @@
+# Example run: Qwen2.5-1.5B-Instruct on Apple Silicon.
+# Fields left out fall back to defaults; the fully resolved config is written
+# to <output_dir>/<name>/resolved_config.yaml on every run.
+
+name: qwen2.5-1.5b-instruct
+seed: 42
+deterministic: false
+output_dir: outputs
+
+model:
+  id: Qwen/Qwen2.5-1.5B-Instruct
+  revision: null        # pin a commit hash for exact reproducibility
+  device: auto          # mps -> cuda -> cpu
+  dtype: auto           # bfloat16 on mps/cuda, float32 on cpu
+
+prompts:
+  harmful:
+    dataset: mlabonne/harmful_behaviors
+    split: train
+    column: text
+    n_train: 128
+    n_eval: 64
+  harmless:
+    dataset: mlabonne/harmless_alpaca
+    split: train
+    column: text
+    n_train: 128
+    n_eval: 64
+  system_prompt: null
+  batch_size: 16
+
+analysis:
+  layers: all           # or an explicit list, e.g. [8, 10, 12, 14, 16]
+  positions: [-1]       # token positions from the end of the prompt
+
+ablation:
+  method: orthogonalize # or: hook
+  direction_layer: null # null = select automatically
+  direction_position: -1
+
+evaluation:
+  max_new_tokens: 64
+  capability_benchmark: null
+
+export:
+  formats: [safetensors]
+  gguf_outtype: q8_0
+  llama_cpp_dir: null
