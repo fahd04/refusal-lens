@@ -19,7 +19,13 @@ from typing import ClassVar
 
 import torch
 from torch import nn
-from transformers import PreTrainedModel, PreTrainedTokenizerBase
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+)
+from typing_extensions import override
 
 from refusal_lens.config import ModelConfig
 
@@ -72,44 +78,51 @@ class ArchitectureAdapter(ABC):
         return [self.attn_out_proj(layer_idx), self.mlp_down_proj(layer_idx)]
 
 
-class Qwen2Adapter(ArchitectureAdapter):
+class LlamaStyleAdapter(ArchitectureAdapter):
+    """Shared adapter for Llama-style models.
+
+    Qwen2 and Llama use the same module layout: ``model.model.layers``,
+    ``model.model.embed_tokens``, and in each layer ``self_attn.o_proj`` and
+    ``mlp.down_proj``.
+    """
+
+    @property
+    @override
+    def decoder_layers(self) -> nn.ModuleList:
+        layers = self.model.get_submodule("model.layers")
+        assert isinstance(layers, nn.ModuleList)
+        return layers
+
+    @property
+    @override
+    def embedding(self) -> nn.Embedding:
+        embed = self.model.get_submodule("model.embed_tokens")
+        assert isinstance(embed, nn.Embedding)
+        return embed
+
+    @override
+    def attn_out_proj(self, layer_idx: int) -> nn.Linear:
+        proj = self.decoder_layers[layer_idx].get_submodule("self_attn.o_proj")
+        assert isinstance(proj, nn.Linear)
+        return proj
+
+    @override
+    def mlp_down_proj(self, layer_idx: int) -> nn.Linear:
+        proj = self.decoder_layers[layer_idx].get_submodule("mlp.down_proj")
+        assert isinstance(proj, nn.Linear)
+        return proj
+
+
+class Qwen2Adapter(LlamaStyleAdapter):
     """Adapter for Qwen2 / Qwen2.5 (``Qwen2ForCausalLM``)."""
 
     model_types = ("qwen2",)
 
-    @property
-    def decoder_layers(self) -> nn.ModuleList:  # noqa: D102 - documented on base class
-        raise NotImplementedError
 
-    @property
-    def embedding(self) -> nn.Embedding:  # noqa: D102
-        raise NotImplementedError
-
-    def attn_out_proj(self, layer_idx: int) -> nn.Linear:  # noqa: D102
-        raise NotImplementedError
-
-    def mlp_down_proj(self, layer_idx: int) -> nn.Linear:  # noqa: D102
-        raise NotImplementedError
-
-
-class LlamaAdapter(ArchitectureAdapter):
+class LlamaAdapter(LlamaStyleAdapter):
     """Adapter for Llama 3.x (``LlamaForCausalLM``)."""
 
     model_types = ("llama",)
-
-    @property
-    def decoder_layers(self) -> nn.ModuleList:  # noqa: D102
-        raise NotImplementedError
-
-    @property
-    def embedding(self) -> nn.Embedding:  # noqa: D102
-        raise NotImplementedError
-
-    def attn_out_proj(self, layer_idx: int) -> nn.Linear:  # noqa: D102
-        raise NotImplementedError
-
-    def mlp_down_proj(self, layer_idx: int) -> nn.Linear:  # noqa: D102
-        raise NotImplementedError
 
 
 _ADAPTERS: dict[str, type[ArchitectureAdapter]] = {}
@@ -164,4 +177,22 @@ def load_model_and_tokenizer(
     Returns:
         ``(model, tokenizer)``. The tokenizer has a pad token set and left padding.
     """
-    raise NotImplementedError
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.id, revision=config.revision, trust_remote_code=config.trust_remote_code
+    )
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+
+    model = AutoModelForCausalLM.from_pretrained(
+        config.id,
+        revision=config.revision,
+        dtype=dtype,
+        device_map=device,
+        trust_remote_code=config.trust_remote_code,
+    )
+
+    model.train(False)  # eval mode
+    model.requires_grad_(False)
+    return model, tokenizer

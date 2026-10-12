@@ -12,10 +12,12 @@ from pathlib import Path
 
 import pytest
 import torch
+from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import (
     LlamaConfig,
     LlamaForCausalLM,
     PreTrainedModel,
+    PreTrainedTokenizerFast,
     Qwen2Config,
     Qwen2ForCausalLM,
 )
@@ -31,6 +33,41 @@ _TINY_DIMS = {
     "num_key_value_heads": 2,
     "max_position_embeddings": 64,
 }
+
+# ChatML, the format Qwen2.5 uses. Kept minimal; real templates add more.
+_CHAT_TEMPLATE = (
+    "{% for m in messages %}<|im_start|> {{ m['role'] }} {{ m['content'] }} <|im_end|> "
+    "{% endfor %}{% if add_generation_prompt %}<|im_start|> assistant {% endif %}"
+)
+_SPECIAL_TOKENS = ["<unk>", "<|im_start|>", "<|im_end|>"]
+_WORDS = [
+    "system",
+    "user",
+    "assistant",
+    "how",
+    "do",
+    "i",
+    "make",
+    "a",
+    "bomb",
+    "cake",
+    "write",
+    "poem",
+    "about",
+    "the",
+    "sea",
+    "steal",
+    "car",
+    "bake",
+    "bread",
+    "hack",
+    "into",
+    "account",
+    "explain",
+    "photosynthesis",
+    "to",
+    "child",
+]
 
 
 def _tiny_model(arch: str) -> PreTrainedModel:
@@ -49,6 +86,35 @@ def _tiny_model(arch: str) -> PreTrainedModel:
 def tiny_model(request: pytest.FixtureRequest) -> PreTrainedModel:
     """Tiny randomly initialized causal LM on CPU, once per supported architecture."""
     return _tiny_model(request.param)
+
+
+def _tiny_tokenizer() -> PreTrainedTokenizerFast:
+    vocab = {tok: i for i, tok in enumerate(_SPECIAL_TOKENS + _WORDS)}
+    assert len(vocab) <= _TINY_DIMS["vocab_size"]
+    backend = Tokenizer(models.WordLevel(vocab=vocab, unk_token="<unk>"))
+    backend.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
+    # No pad token on purpose: like many chat models, loading code must set one.
+    return PreTrainedTokenizerFast(
+        tokenizer_object=backend,
+        unk_token="<unk>",
+        eos_token="<|im_end|>",
+        chat_template=_CHAT_TEMPLATE,
+    )
+
+
+@pytest.fixture
+def tiny_tokenizer() -> PreTrainedTokenizerFast:
+    """Word-level tokenizer built in memory, with a ChatML chat template and no pad token."""
+    return _tiny_tokenizer()
+
+
+@pytest.fixture
+def tiny_model_dir(tmp_path: Path, tiny_model: PreTrainedModel) -> Path:
+    """``tiny_model`` + ``tiny_tokenizer`` saved with ``save_pretrained``, loadable offline."""
+    out = tmp_path / f"tiny-{tiny_model.config.model_type}"
+    tiny_model.save_pretrained(out)
+    _tiny_tokenizer().save_pretrained(out)
+    return out
 
 
 @pytest.fixture
