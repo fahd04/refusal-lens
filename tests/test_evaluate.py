@@ -13,6 +13,7 @@ from refusal_lens.evaluate import (
     kl_divergence,
     next_token_logprobs,
     refusal_rate,
+    select_ablation_layer,
 )
 from refusal_lens.models import get_adapter
 
@@ -182,3 +183,24 @@ def test_ablation_moves_the_distribution(
         edited = next_token_logprobs(tiny_model, tokenizer, PROMPTS)
 
     assert kl_divergence(base, edited) > 0
+
+
+# --- choosing the layer to ablate ----------------------------------------------------
+
+
+def test_select_lowest_refusal_rate_first() -> None:
+    """Stopping refusals matters most, even if another layer changes less."""
+    assert select_ablation_layer([10, 14, 18], [0.5, 0.0, 0.2], [0.01, 0.9, 0.03]) == 14
+
+
+def test_select_breaks_ties_by_kl() -> None:
+    assert select_ablation_layer([14, 20, 26], [0.0, 0.0, 0.0], [0.88, 1.38, 0.08]) == 26
+
+
+@pytest.mark.parametrize(
+    ("layers", "rates", "kls"),
+    [([], [], []), ([1, 2], [0.0], [0.1, 0.2]), ([1], [0.0], [0.1, 0.2])],
+)
+def test_select_bad_input_raises(layers: list[int], rates: list[float], kls: list[float]) -> None:
+    with pytest.raises(ValueError, match="candidate"):
+        select_ablation_layer(layers, rates, kls)

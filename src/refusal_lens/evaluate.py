@@ -143,6 +143,32 @@ def kl_divergence(base_logprobs: torch.Tensor, edited_logprobs: torch.Tensor) ->
     return float(per_prompt.mean())
 
 
+def select_ablation_layer(
+    layers: Sequence[int], refusal_rates: Sequence[float], kls: Sequence[float]
+) -> int:
+    """Choose the layer whose direction, when removed, works best.
+
+    The lowest refusal rate wins; among equally low rates, the smallest KL
+    (least change on harmless prompts) wins.
+
+    Args:
+        layers: Candidate layers.
+        refusal_rates: Harmful refusal rate with each layer's direction removed.
+        kls: Harmless KL with each layer's direction removed.
+
+    Raises:
+        ValueError: If there are no candidates or the lists differ in length.
+    """
+    if not layers or not len(layers) == len(refusal_rates) == len(kls):
+        raise ValueError(
+            f"need one refusal rate and one KL per candidate layer, got "
+            f"{len(layers)} layers, {len(refusal_rates)} rates, {len(kls)} KLs"
+        )
+    # Tuples compare element by element: refusal rate first, then KL.
+    best = min(range(len(layers)), key=lambda i: (refusal_rates[i], kls[i]))
+    return layers[best]
+
+
 def capability_benchmark(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,

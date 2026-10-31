@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 # Fail fast if anything tries to reach the Hugging Face Hub.
@@ -12,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import torch
+import yaml
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import (
     LlamaConfig,
@@ -120,3 +122,35 @@ def tiny_model_dir(tmp_path: Path, tiny_model: PreTrainedModel) -> Path:
 @pytest.fixture
 def example_config_path() -> Path:
     return REPO_ROOT / "configs" / "qwen2.5-1.5b.yaml"
+
+
+def _prompt_file(path: Path, verbs: list[str], nouns: list[str]) -> Path:
+    rows = [{"text": f"how do i {v} a {n}"} for v in verbs for n in nouns]
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def run_config_path(tmp_path: Path, tiny_model_dir: Path) -> Path:
+    """Full run config for ``tiny_model`` with local prompt files; outputs go to ``tmp_path``."""
+    harmful = _prompt_file(
+        tmp_path / "harmful.jsonl", ["steal", "hack"], ["car", "account", "bomb"]
+    )
+    harmless = _prompt_file(
+        tmp_path / "harmless.jsonl", ["bake", "write"], ["cake", "bread", "poem"]
+    )
+    config = {
+        "name": "tiny",
+        "seed": 0,
+        "output_dir": str(tmp_path / "outputs"),
+        "model": {"id": str(tiny_model_dir), "device": "cpu", "dtype": "float32"},
+        "prompts": {
+            "harmful": {"dataset": str(harmful), "n_train": 4, "n_eval": 2},
+            "harmless": {"dataset": str(harmless), "n_train": 4, "n_eval": 2},
+            "batch_size": 3,
+        },
+        "evaluation": {"max_new_tokens": 4},
+    }
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return path

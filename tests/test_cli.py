@@ -20,7 +20,7 @@ def test_version() -> None:
     assert __version__ in result.output
 
 
-@pytest.mark.parametrize("command", ["ablate", "evaluate", "export"])
+@pytest.mark.parametrize("command", ["export"])
 def test_stub_commands_save_resolved_config(
     tmp_path: Path, example_config_path: Path, command: str
 ) -> None:

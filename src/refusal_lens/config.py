@@ -89,6 +89,10 @@ class AblationConfig(_StrictModel):
         description="Layer whose direction is ablated. None selects it automatically.",
     )
     direction_position: int = -1
+    selection_prompts: PositiveInt = Field(
+        default=16,
+        description="Harmful/harmless train prompts used to score each candidate layer.",
+    )
 
 
 class EvaluationConfig(_StrictModel):

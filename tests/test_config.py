@@ -46,6 +46,7 @@ def test_defaults_are_filled(tmp_path: Path) -> None:
     assert config.seed == 0
     assert config.model.device == "auto"
     assert config.ablation.method == "orthogonalize"
+    assert config.ablation.selection_prompts == 16
     assert config.export.formats == ["safetensors"]
 
 
@@ -72,6 +73,7 @@ def test_unknown_keys_are_rejected(tmp_path: Path) -> None:
         ("model", "device", "tpu"),
         ("model", "dtype", "int4"),
         ("analysis", "layers", []),
+        ("ablation", "selection_prompts", 0),
     ],
 )
 def test_invalid_values_are_rejected(tmp_path: Path, section: str, key: str, value: object) -> None:
