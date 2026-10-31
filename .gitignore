@@ -36,3 +36,6 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
+
+# Personal configs (machine-specific paths)
+configs/*.local.yaml
