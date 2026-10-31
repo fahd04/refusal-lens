@@ -97,6 +97,42 @@ def compute_refusal_directions(
     )
 
 
+def separation_scores(
+    directions: RefusalDirections, harmful: ActivationCache, harmless: ActivationCache
+) -> torch.Tensor:
+    """Score how well each candidate direction separates held-out prompts.
+
+    Every prompt is projected onto the unit direction; the score is Cohen's d of
+    the two groups, ``(mean_harmful - mean_harmless) / pooled_std``. Larger = cleaner
+    separation. Use prompts that were *not* used to compute the directions.
+
+    Args:
+        directions: Candidate directions.
+        harmful: Held-out harmful activations, same layers/positions as ``directions``.
+        harmless: Held-out harmless activations, same layers/positions.
+
+    Returns:
+        Shape ``[n_layers, n_positions]``; NaN where the direction is zero.
+
+    Raises:
+        ValueError: If the caches cover different layers or positions than ``directions``.
+    """
+    for cache in (harmful, harmless):
+        if cache.layers != directions.layers or cache.positions != directions.positions:
+            raise ValueError(
+                f"cache layers/positions {cache.layers}/{cache.positions} differ from "
+                f"directions {directions.layers}/{directions.positions}"
+            )
+    unit = torch.nn.functional.normalize(directions.directions, dim=-1)  # [L, P, d]
+    # Project every prompt: [L, P, n_prompts, d] x [L, P, d] -> [L, P, n_prompts].
+    proj_harmful = torch.einsum("lpnd,lpd->lpn", harmful.activations, unit)
+    proj_harmless = torch.einsum("lpnd,lpd->lpn", harmless.activations, unit)
+    pooled_std = ((proj_harmful.var(dim=-1) + proj_harmless.var(dim=-1)) / 2).sqrt()
+    scores = (proj_harmful.mean(dim=-1) - proj_harmless.mean(dim=-1)) / pooled_std
+    is_zero = directions.directions.norm(dim=-1) == 0
+    return scores.masked_fill(is_zero, float("nan"))
+
+
 def select_direction(
     directions: RefusalDirections,
     scores: torch.Tensor,

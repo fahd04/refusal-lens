@@ -13,6 +13,7 @@ from refusal_lens.directions import (
     load_directions,
     save_directions,
     select_direction,
+    separation_scores,
 )
 
 D_MODEL = 8
@@ -148,6 +149,56 @@ def test_select_direction_ignores_nan() -> None:
 def test_select_direction_wrong_shape_raises() -> None:
     with pytest.raises(ValueError, match="shape"):
         select_direction(_directions(), torch.zeros(2, 2))
+
+
+# --- separation_scores ------------------------------------------------------------
+
+
+def test_separation_scores_shape_and_value() -> None:
+    torch.manual_seed(0)
+    harmful = torch.randn(3, 2, 50, D_MODEL)
+    harmless = torch.randn(3, 2, 60, D_MODEL)
+    dirs = _directions()
+
+    scores = separation_scores(
+        dirs, _cache(harmful, [4, 5, 6], [-1, -2]), _cache(harmless, [4, 5, 6], [-1, -2])
+    )
+
+    assert scores.shape == (3, 2)
+    unit = dirs.unit(5, -2)
+    ph, pn = harmful[1, 1] @ unit, harmless[1, 1] @ unit
+    expected = (ph.mean() - pn.mean()) / ((ph.var() + pn.var()) / 2).sqrt()
+    torch.testing.assert_close(scores[1, 1], expected)
+
+
+def test_separation_scores_find_the_planted_layer() -> None:
+    """Only layer 5 separates the prompts; it must get by far the best score."""
+    torch.manual_seed(0)
+    harmful = torch.randn(3, 1, 100, D_MODEL)
+    harmless = torch.randn(3, 1, 100, D_MODEL)
+    harmful[1, 0, :, 0] += 4.0
+    harmful_cache = _cache(harmful, [4, 5, 6], [-1])
+    harmless_cache = _cache(harmless, [4, 5, 6], [-1])
+    dirs = compute_refusal_directions(harmful_cache, harmless_cache)
+
+    scores = separation_scores(dirs, harmful_cache, harmless_cache)
+
+    assert select_direction(dirs, scores) == (5, -1)
+    assert scores[1, 0] > 2 * scores[[0, 2], 0].abs().max()
+
+
+def test_separation_scores_zero_direction_is_nan() -> None:
+    dirs = RefusalDirections(directions=torch.zeros(1, 1, D_MODEL), layers=[0], positions=[-1])
+    cache = _cache(torch.randn(1, 1, 5, D_MODEL), [0], [-1])
+
+    assert separation_scores(dirs, cache, cache).isnan().all()
+
+
+def test_separation_scores_mismatched_layers_raise() -> None:
+    cache = _cache(torch.randn(2, 2, 5, D_MODEL), [4, 5], [-1, -2])
+
+    with pytest.raises(ValueError, match="differ"):
+        separation_scores(_directions(), cache, cache)
 
 
 # --- save / load -----------------------------------------------------------------
