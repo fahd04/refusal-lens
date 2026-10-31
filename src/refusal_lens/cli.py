@@ -9,6 +9,7 @@ The stages build on each other's outputs in the run directory::
     analyze  -> directions.safetensors, analysis.json, plots/
     ablate   -> ablation.json (+ edited_model/ for method "orthogonalize")
     evaluate -> evaluation.json
+    export   -> export/<name>-<outtype>.gguf + Modelfile (safetensors = edited_model/)
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ from refusal_lens.evaluate import (
     refusal_rate,
     select_ablation_layer,
 )
+from refusal_lens.export import convert_to_gguf, write_ollama_modelfile
 from refusal_lens.models import ArchitectureAdapter, get_adapter, load_model_and_tokenizer
 from refusal_lens.prompts import format_chat, load_prompt_sets
 from refusal_lens.visualize import (
@@ -86,8 +88,8 @@ ConfigOption = Annotated[
 ]
 
 
-class MissingStageOutputError(Exception):
-    """A stage needs the output of an earlier stage that hasn't been run yet."""
+class StageError(Exception):
+    """A stage can't run: an earlier stage's output or a setting is missing."""
 
 
 def _version_callback(value: bool) -> None:
@@ -124,7 +126,7 @@ def _run_stage(name: str, stage: Callable[[RunConfig], None], config: RunConfig)
     except NotImplementedError:
         console.print(f"[yellow]{name}: not implemented yet[/]")
         raise typer.Exit(code=1) from None
-    except MissingStageOutputError as error:
+    except StageError as error:
         console.print(f"[red]{name}: {error}[/]")
         raise typer.Exit(code=1) from None
 
@@ -146,7 +148,7 @@ def _load_model(
 def _require_directions(config: RunConfig) -> RefusalDirections:
     path = config.run_dir / DIRECTIONS_FILENAME
     if not path.is_file():
-        raise MissingStageOutputError(f"{path} not found; run `refusal-lens analyze` first")
+        raise StageError(f"{path} not found; run `refusal-lens analyze` first")
     return load_directions(path)
 
 
@@ -317,7 +319,7 @@ def _evaluate(config: RunConfig) -> None:
     """Compare base and edited models on held-out prompts."""
     ablation_path = config.run_dir / ABLATION_FILENAME
     if not ablation_path.is_file():
-        raise MissingStageOutputError(f"{ablation_path} not found; run `refusal-lens ablate` first")
+        raise StageError(f"{ablation_path} not found; run `refusal-lens ablate` first")
     ablation = json.loads(ablation_path.read_text(encoding="utf-8"))
     if config.evaluation.capability_benchmark is not None:
         raise NotImplementedError  # capability benchmarks are on the backlog
@@ -368,7 +370,31 @@ def _evaluate(config: RunConfig) -> None:
 
 def _export(config: RunConfig) -> None:
     """Export the edited model to the configured formats."""
-    raise NotImplementedError
+    ablation_path = config.run_dir / ABLATION_FILENAME
+    if not ablation_path.is_file():
+        raise StageError(f"{ablation_path} not found; run `refusal-lens ablate` first")
+    ablation = json.loads(ablation_path.read_text(encoding="utf-8"))
+    if ablation["method"] != "orthogonalize":
+        raise StageError(
+            f"ablation method is {ablation['method']!r}, so there are no edited weights to "
+            "export; set `ablation.method: orthogonalize` and rerun `refusal-lens ablate`"
+        )
+    edited_dir = config.run_dir / EDITED_MODEL_DIRNAME
+
+    for fmt in config.export.formats:
+        if fmt == "safetensors":
+            # `ablate` already saved the edited model in Hugging Face safetensors format.
+            console.print(f"safetensors: {edited_dir}")
+        elif fmt == "gguf":
+            if config.export.llama_cpp_dir is None:
+                raise StageError("set `export.llama_cpp_dir` to a llama.cpp checkout for GGUF")
+            outtype = config.export.gguf_outtype
+            gguf_path = config.run_dir / "export" / f"{config.name}-{outtype}.gguf"
+            console.print(f"converting to GGUF ({outtype}), this takes a minute")
+            convert_to_gguf(edited_dir, gguf_path, config.export.llama_cpp_dir, outtype)
+            modelfile = write_ollama_modelfile(gguf_path)
+            console.print(f"gguf: {gguf_path}")
+            console.print(f"ollama: ollama create {config.name} -f {modelfile}")
 
 
 @app.command()

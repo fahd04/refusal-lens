@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -20,17 +19,17 @@ def test_version() -> None:
     assert __version__ in result.output
 
 
-@pytest.mark.parametrize("command", ["export"])
-def test_stub_commands_save_resolved_config(
-    tmp_path: Path, example_config_path: Path, command: str
+def test_failed_stage_still_saves_resolved_config(
+    tmp_path: Path, example_config_path: Path
 ) -> None:
+    """Even a stage that stops early (here: nothing to export yet) records its config."""
     raw = yaml.safe_load(example_config_path.read_text(encoding="utf-8"))
     raw["output_dir"] = str(tmp_path)
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
-    result = runner.invoke(app, [command, "--config", str(config_path)])
+    result = runner.invoke(app, ["export", "--config", str(config_path)])
 
-    assert result.exit_code == 1  # stages are stubs for now
+    assert result.exit_code == 1
     resolved = tmp_path / raw["name"] / RESOLVED_CONFIG_FILENAME
     assert load_config(resolved) == load_config(config_path)
