@@ -1,5 +1,8 @@
 # refusal-lens documentation
 
+The [README](../README.md) covers installation, the quickstart, how the method
+works and the Qwen2.5-1.5B results. Plots used there live in [`images/`](images/).
+
 Planned pages:
 
 - **method.md** — difference-of-means directions, direction selection, ablation and
